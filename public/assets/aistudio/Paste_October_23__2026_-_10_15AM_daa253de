@@ -1,0 +1,752 @@
+# PRD Lengkap: Web App POS, Inventory & Business Analytics Terintegrasi
+
+Dokumen kebutuhan produk • Versi 2.0 • Siap dijadikan acuan pengembangan frontend, backend, database, dan deployment
+
+Nama proyek: Integrated POS & Inventory Business Intelligence System
+
+Tujuan proyek ini adalah membangun aplikasi web untuk mengelola penjualan, kasir, persediaan, pembelian, supplier, laporan keuangan, dan analisis bisnis dalam satu sistem terintegrasi. Aplikasi dirancang untuk usaha retail, toko kelontong, minimarket kecil, toko pakaian, toko elektronik, dan bisnis sejenis.
+
+Arsitektur awal tetap menggunakan Google Sheets sebagai penyimpanan data dan Google Apps Script sebagai backend API, dengan frontend web responsif dan IndexedDB untuk transaksi offline.
+
+## 1. Ringkasan produk
+
+## POS & Kasir
+
+Transaksi cepat, diskon, pembayaran, struk, shift kasir.
+
+## Inventory
+
+Stok real-time, batch FIFO, HPP average, stok opname.
+
+## Business Analytics
+
+Laba kotor, produk terlaris, margin, tren penjualan, nilai stok.
+
+## Offline & Sync
+
+Antrean lokal, sinkronisasi otomatis, penanganan konflik.
+
+Target volume
+
+# 200
+
+Transaksi per hari
+
+Target platform
+
+# Web/PWA
+
+Desktop, tablet, dan mobile
+
+### Sasaran bisnis
+
+1. Mempercepat proses transaksi kasir dan mengurangi kesalahan input.
+2. Mengetahui jumlah stok yang tersedia dan histori pergerakannya.
+3. Menghitung HPP dan laba kotor berdasarkan metode persediaan yang dipilih.
+4. Mengintegrasikan penjualan, pembelian, stok, dan laporan keuangan.
+5. Memberikan dashboard analisis yang membantu pemilik mengambil keputusan.
+6. Mempertahankan kemampuan transaksi ketika internet terputus, dengan sinkronisasi setelah koneksi pulih.
+
+### Batasan versi pertama
+
+- Maksimal 200 transaksi penjualan per hari sebagai target awal.
+- Satu bisnis dengan kemungkinan beberapa kasir dan perangkat.
+- Satu lokasi gudang/toko pada MVP, dengan struktur yang memungkinkan multi-cabang pada versi berikutnya.
+- Google Sheets bukan pengganti database transaksional penuh; backend harus mengendalikan perubahan data, bukan membiarkan frontend menulis langsung ke spreadsheet.
+
+## 2. Arsitektur sistem: frontend, backend, dan database
+
+Frontend Web / PWA
+
+POS • Inventory • Pembelian • Dashboard • Laporan
+
+React + TypeScript • Responsive UI • IndexedDB
+
+Backend API
+
+Google Apps Script Web App
+
+Validasi • Autentikasi • Hak akses • Idempotency • LockService
+
+Google Sheets
+
+Master data, transaksi, stok, dan laporan
+
+IndexedDB
+
+Cache katalog, keranjang, antrean offline
+
+Frontend tidak mengakses spreadsheet secara langsung. Semua perubahan data server melewati backend.
+
+### 2.1 Teknologi yang direkomendasikan
+
+| Komponen            | Teknologi                                     | Tanggung jawab                   |
+| ------------------- | --------------------------------------------- | -------------------------------- |
+| Frontend            | React + TypeScript + Vite                     | Antarmuka pengguna               |
+| UI                  | Tailwind CSS + komponen UI                    | Layout dan desain responsif      |
+| Routing             | React Router                                  | Navigasi halaman                 |
+| Data fetching       | TanStack Query atau layanan API terpusat      | Cache server dan status request  |
+| Penyimpanan offline | IndexedDB + Dexie.js                          | Cache dan antrean transaksi      |
+| Backend             | Google Apps Script                            | API, validasi, proses transaksi  |
+| Database MVP        | Google Sheets                                 | Data bisnis terstruktur          |
+| Grafik              | Recharts                                      | Visualisasi analitik             |
+| Autentikasi         | Login dengan sesi/token yang dikelola backend | Identitas dan otorisasi pengguna |
+| Hosting frontend    | Firebase Hosting atau layanan hosting HTTPS   | Distribusi aplikasi web          |
+| Backup              | Salinan spreadsheet berkala                   | Pemulihan data                   |
+
+Catatan penting: React, IndexedDB, dan Google Sheets dapat digunakan untuk MVP. Namun, jika transaksi offline dilakukan oleh beberapa kasir, Google Sheets tidak dapat menjamin urutan kejadian berdasarkan waktu perangkat secara sempurna. Backend perlu memvalidasi stok ketika transaksi diterima, menerapkan urutan pemrosesan yang konsisten, dan mencatat konflik. Jika bisnis berkembang atau membutuhkan konsistensi transaksi yang ketat, backend dengan database PostgreSQL lebih tepat.
+
+## 3. Struktur modul aplikasi
+
+Modul A — Dashboard
+
+Ringkasan omzet, jumlah transaksi, laba kotor, nilai persediaan, produk terlaris, stok menipis, dan perbandingan periode.
+
+Modul B — POS & Kasir
+
+Pencarian SKU/barcode, keranjang, kuantitas, diskon, pajak, metode pembayaran, penyelesaian transaksi, cetak struk, pembatalan dan retur.
+
+Modul C — Inventory
+
+Stok tersedia, kartu stok, batch masuk, penyesuaian stok, stok opname, transfer lokasi pada versi lanjutan, notifikasi stok minimum, dan valuasi persediaan.
+
+Modul D — Pembelian & Supplier
+
+Purchase order, penerimaan barang, faktur pembelian, biaya tambahan, retur pembelian, daftar supplier, dan histori harga beli.
+
+Modul E — Business Analytics
+
+Analisis penjualan, laba kotor, margin, tren harian, produk terlaris, produk lambat terjual, kontribusi kategori, dan perputaran persediaan.
+
+Modul F — Keuangan
+
+Kas masuk/keluar, biaya operasional, pengeluaran kasir, penutupan shift, rekonsiliasi pembayaran, dan laporan laba rugi sederhana.
+
+Modul G — Pengguna & Pengaturan
+
+Admin, pemilik, manajer, kasir, izin akses, metode HPP, konfigurasi pajak, diskon, format struk, dan pengaturan bisnis.
+
+## 4. Persyaratan fungsional terperinci
+
+### FR-01 — Login dan hak akses
+
+- Pengguna harus login sebelum mengakses modul yang dilindungi.
+- Sistem menyediakan role: Owner, Admin, Manager, dan Cashier.
+- Owner dapat mengakses semua modul dan pengaturan.
+- Manager dapat melihat laporan serta mengelola stok dan pembelian sesuai izin.
+- Cashier dapat membuat transaksi dan menjalankan shift kasir.
+- Setiap tindakan penting direkam dalam audit log.
+- Perubahan harga, diskon di luar batas, penghapusan, dan pembatalan memerlukan izin khusus.
+
+### FR-02 — Master produk
+
+Setiap produk memiliki:
+
+- ID unik dan SKU unik.
+- Nama produk, kategori, merek opsional, dan satuan.
+- Barcode opsional.
+- Harga beli, harga jual, serta harga khusus opsional.
+- Stok minimum dan stok awal.
+- Status aktif/nonaktif.
+- Foto produk opsional.
+- Metode pengelolaan batch bila diperlukan.
+
+Fungsi yang tersedia: tambah, lihat, ubah, nonaktifkan, impor CSV, ekspor CSV, pencarian, filter kategori, serta validasi SKU duplikat.
+
+Aturan: produk yang sudah memiliki histori transaksi tidak dihapus permanen. Produk dinonaktifkan agar histori tetap utuh.
+
+### FR-03 — POS dan checkout
+
+Alur transaksi:
+
+1. Kasir membuka shift.
+2. Produk dicari melalui nama, SKU, atau barcode.
+3. Produk ditambahkan ke keranjang.
+4. Kuantitas dan diskon divalidasi.
+5. Sistem menghitung subtotal, pajak jika berlaku, diskon, dan total.
+6. Kasir memilih pembayaran tunai, transfer, QRIS, kartu, atau metode lain yang dikonfigurasi.
+7. Backend memvalidasi transaksi dan stok.
+8. Sistem menghasilkan nomor struk unik.
+9. Transaksi disimpan, stok dikurangi, HPP dicatat, dan struk tersedia untuk dicetak.
+10. Laporan diperbarui setelah transaksi berhasil diposting.
+
+Sistem juga mendukung transaksi yang ditunda, catatan pesanan, pembayaran campuran pada tahap lanjutan, retur penjualan, serta riwayat transaksi.
+
+### FR-04 — Inventory dan pergerakan stok
+
+Semua perubahan stok harus berasal dari peristiwa yang tercatat, seperti:
+
+- Penerimaan pembelian.
+- Penjualan.
+- Retur penjualan.
+- Retur pembelian.
+- Stok opname.
+- Barang rusak atau hilang.
+- Penyesuaian stok yang disetujui.
+
+Setiap pergerakan menyimpan ID, produk, jumlah masuk/keluar, waktu pencatatan, referensi transaksi, pengguna, dan alasan perubahan.
+
+Stok dihitung dari saldo awal ditambah seluruh pergerakan masuk dikurangi pergerakan keluar. Sistem tidak boleh mengubah histori lama secara diam-diam.
+
+### FR-05 — Pembelian dan supplier
+
+- Buat pesanan pembelian.
+- Simpan supplier, nomor dokumen, tanggal, dan item.
+- Terima barang seluruhnya atau sebagian.
+- Perbarui stok hanya saat penerimaan diposting.
+- Catat harga beli aktual dan biaya tambahan yang dialokasikan.
+- Hitung utang supplier jika pembelian kredit diaktifkan.
+- Catat retur pembelian dan koreksi penerimaan melalui transaksi pembalik.
+
+### FR-06 — Metode HPP: FIFO dan Average
+
+Metode HPP harus ditentukan oleh konfigurasi bisnis, dan tidak boleh berganti tanpa proses yang terkendali.
+
+FIFO (First In, First Out)
+
+- Barang yang lebih dahulu masuk menjadi barang yang lebih dahulu dibebankan sebagai HPP.
+- Sistem mengelola batch dan kuantitas tersisa.
+- Penjualan dapat menggunakan lebih dari satu batch.
+- HPP dihitung berdasarkan kuantitas yang diambil dari setiap batch.
+
+Moving Weighted Average
+
+- Setiap penerimaan pembelian memperbarui biaya rata-rata tertimbang.
+- HPP penjualan menggunakan biaya rata-rata yang berlaku saat transaksi diposting.
+- Retur, biaya tambahan, serta penyesuaian perlu mengikuti kebijakan akuntansi yang ditetapkan.
+
+Rumus dasar moving average:
+
+\\[ \text{HPP rata-rata baru} = \frac{\text{Nilai stok lama}+\text{Nilai penerimaan baru}} {\text{Kuantitas stok lama}+\text{Kuantitas masuk}} \\]
+
+Rumus ini berlaku saat penerimaan barang dengan stok yang tersedia. Penanganan stok nol, retur, dan transaksi negatif harus didefinisikan tersendiri.
+
+### FR-07 — Business Analytics
+
+Dashboard menyediakan filter rentang tanggal, produk, kategori, kasir, dan metode pembayaran sesuai kebutuhan.
+
+| Indikator                 | Definisi                                                       |
+| ------------------------- | -------------------------------------------------------------- |
+| Omzet bersih              | Penjualan setelah diskon dan retur sesuai kebijakan            |
+| HPP                       | Biaya barang yang terjual berdasarkan metode aktif             |
+| Laba kotor                | Omzet bersih dikurangi HPP                                     |
+| Margin laba kotor         | Laba kotor dibagi omzet bersih × 100%                          |
+| Rata-rata nilai transaksi | Omzet bersih dibagi jumlah transaksi yang memenuhi definisi    |
+| Produk terlaris           | Peringkat produk berdasarkan unit terjual atau nilai penjualan |
+| Nilai persediaan          | Kuantitas tersisa × nilai biaya persediaan                     |
+| Stok menipis              | Produk yang mencapai atau berada di bawah batas minimum        |
+| Perputaran stok           | HPP periode dibagi rata-rata nilai persediaan periode          |
+
+Laporan laba rugi versi pertama adalah laporan laba kotor dan biaya operasional yang tercatat, bukan otomatis laporan keuangan lengkap atau laporan pajak resmi.
+
+### FR-08 — Offline-first dan sinkronisasi
+
+- Aplikasi menyimpan katalog produk dan konfigurasi minimum di IndexedDB.
+- Transaksi offline disimpan secara lokal dengan ID unik.
+- Status transaksi mencakup `PENDING`, `SYNCING`, `SYNCED`, dan `FAILED`.
+- Sinkronisasi mengirim transaksi secara bertahap.
+- Backend menerapkan idempotency agar pengiriman ulang tidak menciptakan penjualan ganda.
+- Jika stok atau harga telah berubah, sistem mengikuti kebijakan konflik yang ditentukan.
+- Transaksi gagal tidak boleh dihapus dari antrean tanpa penanganan.
+
+Batasan: transaksi offline tidak dapat langsung menjamin konsistensi stok lintas perangkat. Jika dua kasir offline menjual stok barang yang sama, sistem harus mendeteksi kemungkinan overselling saat sinkronisasi dan menandai transaksi yang memerlukan rekonsiliasi. Jangan menjanjikan stok global real-time saat perangkat terputus.
+
+## 5. Desain database Google Sheets
+
+Untuk implementasi yang lebih lengkap, struktur lima tab awal perlu dikembangkan menjadi beberapa tabel logis. Setiap tab harus memiliki header tetap, ID unik, format tanggal konsisten, dan aturan validasi.
+
+### 5.1 Daftar tab database
+
+| No. | Nama tab              | Fungsi                                    |
+| --- | --------------------- | ----------------------------------------- |
+| 1   | `pengaturan_sistem`   | Konfigurasi metode HPP, pajak, dan bisnis |
+| 2   | `pengguna`            | Akun dan role pengguna                    |
+| 3   | `master_produk`       | Identitas produk dan harga                |
+| 4   | `master_kategori`     | Kategori produk                           |
+| 5   | `master_supplier`     | Data supplier                             |
+| 6   | `master_pelanggan`    | Data pelanggan opsional                   |
+| 7   | `transaksi_penjualan` | Header penjualan                          |
+| 8   | `detail_penjualan`    | Item per transaksi                        |
+| 9   | `pembayaran`          | Rincian pembayaran                        |
+| 10  | `pembelian`           | Header pembelian                          |
+| 11  | `detail_pembelian`    | Item pembelian                            |
+| 12  | `log_inventaris`      | Jurnal mutasi stok                        |
+| 13  | `fifo_batches`        | Batch persediaan FIFO                     |
+| 14  | `stok_aktual_average` | Saldo dan biaya average                   |
+| 15  | `pengeluaran`         | Biaya operasional                         |
+| 16  | `shift_kasir`         | Pembukaan dan penutupan kasir             |
+| 17  | `retur_transaksi`     | Header retur                              |
+| 18  | `detail_retur`        | Rincian barang retur                      |
+| 19  | `audit_log`           | Histori aktivitas penting                 |
+| 20  | `sync_queue`          | Status pemrosesan sinkronisasi            |
+| 21  | `snapshot_harian`     | Ringkasan harian untuk dashboard          |
+
+Tab tersebut adalah tabel logis. Beberapa dapat digabung atau dipisahkan sesuai volume data, tetapi pemisahan header dan detail transaksi sangat disarankan.
+
+### 5.2 Struktur kolom inti
+
+Contoh skema data minimum untuk pengembangan backend.
+
+`master_produk`
+
+`produk_id`, `sku`, `barcode`, `nama_produk`, `kategori_id`, `satuan`, `harga_beli_referensi`, `harga_jual`, `stok_minimum`, `status_aktif`, `updated_at`
+
+`transaksi_penjualan`
+
+`transaksi_id`, `nomor_struk`, `waktu_transaksi`, `kasir_id`, `subtotal`, `diskon`, `pajak`, `total`, `status`, `metode_pembayaran_utama`, `sync_id`, `created_at`
+
+`detail_penjualan`
+
+`detail_id`, `transaksi_id`, `produk_id`, `sku_snapshot`, `nama_snapshot`, `qty`, `harga_jual`, `diskon_item`, `hpp_total`, `subtotal`
+
+`log_inventaris`
+
+`log_id`, `produk_id`, `waktu_efektif`, `waktu_posting`, `tipe_transaksi`, `qty_masuk`, `qty_keluar`, `nilai_biaya`, `referensi_id`, `pengguna_id`, `status_posting`
+
+`fifo_batches`
+
+`batch_id`, `produk_id`, `referensi_penerimaan`, `tanggal_masuk`, `qty_awal`, `qty_sisa`, `biaya_per_unit`, `status`
+
+`stok_aktual_average`
+
+`produk_id`, `qty_on_hand`, `nilai_persediaan`, `biaya_rata_rata`, `updated_at`
+
+### 5.3 Aturan integritas database
+
+1. ID transaksi, produk, detail, dan log harus unik.
+2. `transaksi_id` menghubungkan header penjualan dengan detailnya.
+3. Detail penjualan menyimpan nama, SKU, dan harga saat transaksi terjadi agar perubahan master produk tidak mengubah histori.
+4. Transaksi yang telah diposting tidak boleh dihapus secara langsung. Gunakan pembatalan atau transaksi pembalik yang terekam.
+5. Semua perubahan stok harus memiliki referensi sumber.
+6. Angka uang disimpan sebagai nilai numerik dengan aturan pembulatan konsisten.
+7. Tanggal disimpan dalam format ISO 8601; laporan menggunakan zona waktu bisnis yang dikonfigurasi.
+8. Perubahan metode HPP memerlukan tanggal efektif, persetujuan, dan evaluasi dampak pada valuasi stok. Jangan mengubah metode secara retroaktif tanpa proses penilaian ulang.
+
+Catatan kapasitas: 200 transaksi per hari menghasilkan sekitar 73.000 transaksi penjualan per tahun. Dengan detail item, pembayaran, dan mutasi stok, jumlah baris aktual akan lebih besar daripada 73.000. Google Sheets memiliki batas 10 juta sel per spreadsheet, sehingga kapasitas harus dihitung dari semua tab, bukan hanya log inventaris.
+
+## 6. Spesifikasi backend API
+
+Backend harus menyediakan satu lapisan API yang konsisten. Frontend tidak boleh menghitung ulang HPP atau mengubah stok secara langsung sebagai sumber kebenaran.
+
+### 6.1 Endpoint logis
+
+| Method | Endpoint                  | Fungsi                              |
+| ------ | ------------------------- | ----------------------------------- |
+| POST   | `/auth/login`             | Login pengguna                      |
+| GET    | `/products`               | Daftar produk dan pencarian         |
+| POST   | `/products`               | Tambah produk                       |
+| PATCH  | `/products/{id}`          | Ubah data produk                    |
+| GET    | `/inventory/stock`        | Lihat saldo stok                    |
+| GET    | `/inventory/movements`    | Riwayat pergerakan stok             |
+| POST   | `/sales`                  | Buat dan posting penjualan          |
+| GET    | `/sales`                  | Riwayat transaksi                   |
+| POST   | `/sales/{id}/void`        | Batalkan melalui proses terkendali  |
+| POST   | `/sales/{id}/returns`     | Buat retur                          |
+| POST   | `/purchases`              | Buat pembelian                      |
+| POST   | `/purchases/{id}/receive` | Posting penerimaan barang           |
+| GET    | `/analytics/summary`      | Ringkasan dashboard                 |
+| GET    | `/analytics/profit-loss`  | Laporan laba rugi sederhana         |
+| GET    | `/analytics/top-products` | Produk terlaris                     |
+| POST   | `/sync/batch`             | Sinkronisasi transaksi offline      |
+| GET    | `/settings`               | Ambil konfigurasi yang diizinkan    |
+| PATCH  | `/settings`               | Ubah pengaturan oleh role berwenang |
+
+Endpoint tersebut merupakan spesifikasi logis. Google Apps Script Web App tidak otomatis menyediakan routing REST seperti server Express; pengembang perlu membuat dispatcher berdasarkan `doGet(e)` dan `doPost(e)`, serta menerapkan routing, autentikasi, validasi, dan format respons sendiri.
+
+### 6.2 Format respons standar
+
+Contoh respons sukses:
+
+```
+{
+  "success": true,
+  "data": {
+    "transaksi_id": "TRX-UUID",
+    "nomor_struk": "POS-20261023-0001",
+    "total": 150000,
+    "status": "POSTED"
+  },
+  "error": null
+}
+```
+
+Contoh respons gagal:
+
+```
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "INSUFFICIENT_STOCK",
+    "message": "Stok produk tidak mencukupi."
+  }
+}
+```
+
+Kode kesalahan standar: `UNAUTHORIZED`, `FORBIDDEN`, `VALIDATION_ERROR`, `DUPLICATE_REQUEST`, `INSUFFICIENT_STOCK`, `SYNC_CONFLICT`, `RATE_LIMITED`, dan `SERVER_ERROR`.
+
+### 6.3 Proses transaksi backend
+
+Urutan posting transaksi harus mengikuti aturan berikut:
+
+1. Autentikasi dan otorisasi pengguna.
+2. Validasi payload dan `idempotency_key`.
+3. Periksa status transaksi dan ketersediaan stok yang tercatat di server.
+4. Ambil harga dan metode HPP yang berlaku menurut kebijakan bisnis.
+5. Hitung ulang subtotal, diskon, pajak, total, dan HPP di backend.
+6. Tulis header, detail, pembayaran, dan mutasi stok dengan mekanisme pemulihan jika proses parsial gagal.
+7. Tandai transaksi sebagai `POSTED` hanya jika seluruh langkah kritis berhasil.
+8. Simpan hasil berdasarkan kunci idempotensi agar pengiriman ulang mengembalikan hasil transaksi yang sama.
+
+`LockService` dapat membantu mencegah dua proses Apps Script mengubah data secara bersamaan. Namun, lock bukan pengganti transaksi database. Untuk menjaga konsistensi, desain juga perlu menyediakan mekanisme pemulihan dari kegagalan penulisan parsial, pemeriksaan saldo, dan rekonsiliasi.
+
+## 7. Desain frontend dan navigasi
+
+Sidebar / Menu Utama
+
+Dashboard
+
+POS Kasir
+
+Produk
+
+Inventory
+
+Pembelian
+
+Supplier
+
+Keuangan
+
+Analitik
+
+Laporan
+
+Pengaturan
+
+### Halaman utama yang harus dibuat
+
+- `/login` — autentikasi.
+- `/dashboard` — KPI dan grafik.
+- `/pos` — halaman kasir dengan katalog, keranjang, dan pembayaran.
+- `/products` — master produk.
+- `/inventory` — saldo, mutasi, batch, dan opname.
+- `/purchases` — pembelian dan penerimaan barang.
+- `/suppliers` — data supplier.
+- `/sales` — histori transaksi dan retur.
+- `/expenses` — pengeluaran operasional.
+- `/reports` — laporan penjualan, HPP, dan laba rugi.
+- `/users` — pengguna dan role.
+- `/settings` — metode HPP dan konfigurasi bisnis.
+
+### Standar pengalaman pengguna
+
+- POS mengutamakan keyboard, pencarian cepat, dan input barcode.
+- Tombol checkout harus mudah ditemukan dan mencegah klik ganda.
+- Status koneksi, status sinkronisasi, dan transaksi yang gagal harus terlihat.
+- Tabel mendukung pencarian, filter, pengurutan, pagination, dan ekspor.
+- Form memiliki validasi dan pesan kesalahan yang jelas.
+- Dashboard menampilkan indikator kosong, loading, dan gagal memuat data.
+- Tampilan mendukung desktop, tablet, dan layar ponsel.
+- Struk menyediakan layout cetak 58 mm dan 80 mm.
+
+## 8. Business Analytics dan rumus perhitungan
+
+Dashboard bukan sekadar visualisasi omzet. Semua angka harus berasal dari transaksi yang telah diposting, menggunakan definisi metrik yang konsisten.
+
+Contoh simulasi dashboard — bukan data transaksi aktual
+
+Omzet bersih
+
+# Rp8.500.000
+
+HPP
+
+# Rp5.100.000
+
+Laba kotor
+
+# Rp3.400.000
+
+Margin kotor
+
+# 40%
+
+Contoh tren omzet 7 hari
+
+Rp0Rp550KRp1.1MRp1.6MRp2.2MSenSelRabKamJumSabMin
+
+Data simulasi untuk menunjukkan rancangan visual.
+
+### Rumus bisnis yang wajib konsisten
+
+Laba kotor
+
+\\[ \text{Laba Kotor}=\text{Penjualan Bersih}-\text{HPP} \\]
+
+Margin laba kotor
+
+\\[ \text{Margin}=\frac{\text{Laba Kotor}}{\text{Penjualan Bersih}}\times100\\% \\]
+
+Laba operasional sederhana
+
+\\[ \text{Laba Operasional}=\text{Laba Kotor}-\text{Biaya Operasional} \\]
+
+Valuasi stok
+
+\\[ \text{Nilai Stok}=\sum\_{i=1}^{n}(\text{Qty}\_i\times\text{Biaya Unit}\_i) \\]
+
+Perhitungan tersebut harus mempertimbangkan retur, diskon, barang rusak, dan kebijakan pembebanan biaya. Margin tidak didefinisikan sebagai markup terhadap HPP. Jika penjualan bersih nol, margin harus ditampilkan sebagai tidak tersedia, bukan pembagian dengan nol.
+
+## 9. Persyaratan nonfungsional
+
+| Kategori       | Persyaratan                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------------- |
+| Kinerja        | Target awal pencarian produk dan interaksi kasir terasa responsif pada perangkat yang didukung     |
+| Kapasitas      | 200 transaksi/hari, dengan jumlah item per transaksi dan pengguna bersamaan diuji secara eksplisit |
+| Keandalan      | Pengiriman ulang transaksi tidak membuat transaksi ganda                                           |
+| Keamanan       | HTTPS, validasi backend, pembatasan akses berdasarkan role, dan audit log                          |
+| Integritas     | Transaksi yang gagal tidak boleh meninggalkan stok dan laporan dalam keadaan tidak konsisten       |
+| Offline        | POS dapat menggunakan katalog tersimpan dan antrean lokal saat internet terputus                   |
+| Sinkronisasi   | Antrean memiliki status, percobaan ulang, serta penanganan konflik                                 |
+| Backup         | Backup berkala, retensi, dan prosedur pemulihan diuji                                              |
+| Kompatibilitas | Browser modern desktop, tablet, dan ponsel                                                         |
+| Aksesibilitas  | Kontras memadai, navigasi keyboard, dan label form jelas                                           |
+| Pemeliharaan   | Kode frontend, backend, konfigurasi, dan migrasi skema terdokumentasi                              |
+
+Target waktu respons, jumlah kasir bersamaan, serta target pemulihan perlu ditetapkan melalui pengujian. Google Apps Script mempunyai kuota eksekusi dan batas layanan yang dapat berubah, sehingga kapasitasnya harus divalidasi terhadap pola pemakaian aktual.
+
+### Keamanan dan perlindungan data
+
+- Jangan menanamkan kredensial rahasia atau kunci backend di JavaScript frontend.
+- Batasi akses langsung ke spreadsheet dan Apps Script.
+- Validasi setiap input dan hak akses di backend.
+- Hindari menyimpan data kartu pembayaran sensitif.
+- Jangan menyimpan password dalam teks biasa.
+- Batasi informasi pelanggan yang dikumpulkan.
+- Terapkan pencadangan, audit log, dan prosedur pemulihan.
+- Gunakan pengelolaan sesi yang aman dan kebijakan kedaluwarsa sesi.
+
+Penting: Google Sheets dan Apps Script cocok untuk MVP berbiaya rendah, tetapi memiliki keterbatasan untuk autentikasi kompleks, transaksi atomik, serta sinkronisasi multi-kasir. Jika kebutuhan bisnis menuntut konsistensi stok yang kuat, pertimbangkan migrasi ke database transaksional.
+
+## 10. Kriteria penerimaan dan pengujian
+
+Fitur baru dianggap selesai apabila memenuhi skenario berikut.
+
+## Checklist UAT
+
+0/12 diuji
+
+Login dan role
+
+Kasir tidak dapat membuka pengaturan metode HPP atau melakukan tindakan yang tidak diizinkan.
+
+POS online
+
+Transaksi berhasil menghasilkan nomor struk, detail barang, pembayaran, pengurangan stok, dan HPP yang konsisten.
+
+POS offline
+
+Transaksi tersimpan di IndexedDB ketika koneksi mati dan muncul dalam antrean yang dapat dilihat.
+
+Sinkronisasi ulang
+
+Pengiriman transaksi yang sama berkali-kali hanya menghasilkan satu transaksi server.
+
+FIFO
+
+Penjualan mengambil biaya dari batch tertua yang masih memiliki kuantitas, dan HPP cocok dengan batch yang terpakai.
+
+Moving average
+
+Penerimaan barang memperbarui biaya rata-rata tertimbang dan penjualan menggunakan biaya yang berlaku saat posting.
+
+Konflik stok
+
+Dua kasir yang menjual stok sama ketika offline memunculkan konflik atau rekonsiliasi, bukan dianggap selalu konsisten.
+
+Laporan
+
+Omzet, retur, HPP, laba kotor, dan nilai stok cocok dengan data transaksi sumber.
+
+Pembelian
+
+Stok bertambah hanya setelah penerimaan diposting, bukan ketika pesanan baru dibuat.
+
+Backup
+
+Data dapat dipulihkan melalui prosedur backup yang telah diuji.
+
+Cetak struk
+
+Struk terbaca di layout 58 mm dan 80 mm; kegagalan koneksi printer tidak menghapus transaksi.
+
+Kegagalan parsial
+
+Kegagalan penulisan data tidak membuat transaksi berstatus berhasil dengan stok yang tidak sesuai.
+
+Reset checklistSalin checklist UAT
+
+Checklist ini adalah alat persiapan pengujian, bukan bukti bahwa aplikasi telah lulus pengujian.
+
+## 11. Tahapan pengembangan
+
+## 01
+
+Fondasi aplikasi
+
+Prioritas P0
+
+Struktur frontend, konfigurasi backend, login, role, master produk, skema Google Sheets, dan koneksi API.
+
+## 02
+
+POS dan inventory inti
+
+Prioritas P0
+
+Checkout, pembayaran, struk, mutasi stok, pembelian, penerimaan barang, serta HPP FIFO dan average.
+
+## 03
+
+Offline-first dan sinkronisasi
+
+Prioritas P1
+
+IndexedDB, antrean transaksi, idempotency, percobaan ulang, deteksi konflik, dan rekonsiliasi.
+
+## 04
+
+Analitik dan keuangan
+
+Prioritas P1
+
+Dashboard, laba rugi sederhana, analisis produk, biaya operasional, laporan stok, dan ekspor.
+
+## 05
+
+UAT dan deployment
+
+Prioritas P0
+
+Pengujian integrasi, beban, keamanan, backup, deployment HTTPS, dan pelatihan pengguna.
+
+Urutan tersebut menunjukkan dependensi pekerjaan, bukan estimasi durasi pasti. Offline multi-kasir dan konsistensi HPP perlu diuji sejak awal karena keduanya memiliki risiko teknis terbesar.
+
+## 12. Struktur folder proyek
+
+Berikut rancangan struktur kode yang dapat digunakan untuk memulai implementasi.
+
+```
+integrated-pos/
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── router.tsx
+│   │   │   └── providers.tsx
+│   │   ├── components/
+│   │   ├── layouts/
+│   │   ├── pages/
+│   │   │   ├── Login.tsx
+│   │   │   ├── Dashboard.tsx
+│   │   │   ├── POS.tsx
+│   │   │   ├── Products.tsx
+│   │   │   ├── Inventory.tsx
+│   │   │   ├── Purchases.tsx
+│   │   │   ├── Analytics.tsx
+│   │   │   └── Reports.tsx
+│   │   ├── services/
+│   │   │   ├── api.ts
+│   │   │   └── sync.ts
+│   │   ├── db/
+│   │   │   └── indexedDB.ts
+│   │   ├── hooks/
+│   │   ├── types/
+│   │   └── main.tsx
+│   ├── package.json
+│   └── vite.config.ts
+├── backend/
+│   ├── Code.gs
+│   ├── Router.gs
+│   ├── Auth.gs
+│   ├── Products.gs
+│   ├── Sales.gs
+│   ├── Inventory.gs
+│   ├── Purchases.gs
+│   ├── Costing.gs
+│   ├── Analytics.gs
+│   ├── Sync.gs
+│   ├── Validation.gs
+│   └── Config.gs
+├── docs/
+│   ├── PRD.md
+│   ├── DATABASE_SCHEMA.md
+│   ├── API_SPEC.md
+│   └── TEST_PLAN.md
+└── README.md
+```
+
+Untuk Google Apps Script, file `.gs` tersebut merupakan pemisahan modul logis. Pengembang dapat mengelolanya melalui Apps Script IDE atau menggunakan `clasp` agar source code tersimpan dalam proyek lokal.
+
+## 13. Keputusan yang harus ditetapkan sebelum coding
+
+Ada beberapa keputusan bisnis yang berpengaruh langsung terhadap skema database dan logika transaksi.
+
+## Konfigurasi awal proyek
+
+Pilih kebutuhan yang paling mendekati bisnis Anda. Jawaban ini dapat digunakan untuk menyusun spesifikasi teknis final.
+
+1\. Database utama
+
+Google Sheets + Apps Script (biaya awal rendah)
+
+PostgreSQL + backend API (lebih kuat untuk transaksi)
+
+Google Sheets untuk ekspor/laporan, PostgreSQL untuk transaksi
+
+2\. Metode HPP
+
+FIFO saja
+
+Moving weighted average saja
+
+Keduanya tersedia, satu metode aktif per bisnis
+
+3\. Operasional offline
+
+Online saja
+
+Offline untuk satu perangkat kasir
+
+Banyak kasir dan perangkat dapat offline bersamaan
+
+4\. Jenis bisnis
+
+Retail / toko umum
+
+Makanan dan minuman (F&B)
+
+Grosir / distributor
+
+Retail, F&B, dan grosir
+
+5\. Pembayaran
+
+Tunai saja
+
+Tunai, transfer, QRIS, dan metode lainnya
+
+6\. Target pengembangan
+
+Siap dibuat melalui Google AI Studio
+
+Source code lengkap untuk dikembangkan lokal
+
+Arsitektur produksi dengan deployment cloud
+
+Susun spesifikasi teknis final
+
+Rekomendasi saya: jika prioritasnya cepat dibuat dan biaya awal rendah, mulai dari Google Sheets + Apps Script dengan satu perangkat offline, transaksi online sebagai sumber kebenaran, dan FIFO serta moving average yang diuji melalui kasus nyata. Jika sejak awal beberapa kasir harus bisa offline bersamaan tanpa risiko konflik stok, pilih PostgreSQL atau arsitektur hybrid.
+
+Dokumen ini sudah menjadi fondasi kebutuhan produk. Agar benar-benar siap dibangun dan digunakan, tahap berikutnya adalah menghasilkan implementasi frontend dan backend, membuat spreadsheet beserta header tabelnya, menyiapkan autentikasi, lalu menguji seluruh alur penjualan, HPP, sinkronisasi, dan pemulihan data sebelum deployment.

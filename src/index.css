@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+@layer utilities {
+  /* Hide scrollbar for clean UI */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  #printable-receipt,
+  #printable-receipt *,
+  #printable-barcode-sheet,
+  #printable-barcode-sheet * {
+    visibility: visible;
+  }
+
+  #printable-receipt {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  #printable-barcode-sheet {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+  }
+
+  @page {
+    margin: 4mm;
+    size: auto;
+  }
+}

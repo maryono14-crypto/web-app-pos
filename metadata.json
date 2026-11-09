@@ -1,0 +1,8 @@
+{
+  "name": "new Integrated POS \u0026 Business Intelligence",
+  "description": "Sistem Kasir POS, Inventaris FIFO/Average, Pembelian, Keuangan, dan Analisis Bisnis dengan dukungan Offline \u0026 Google Sheets sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
