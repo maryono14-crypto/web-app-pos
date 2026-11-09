@@ -1,0 +1,96 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Master product catalog item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "barcode": { "type": "string" },
+        "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "buyPrice": { "type": "number" },
+        "sellPrice": { "type": "number" },
+        "currentStock": { "type": "number" },
+        "minStock": { "type": "number" }
+      },
+      "required": ["id", "name", "sellPrice"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Sales transaction record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "customerId": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "invoiceNumber", "totalAmount"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer record with credit/piutang limit",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "creditLimit": { "type": "number" },
+        "currentDebt": { "type": "number" }
+      },
+      "required": ["id", "name"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Operational expense record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "category", "amount"]
+    },
+    "BusinessSetting": {
+      "title": "BusinessSetting",
+      "description": "Store configuration and preferences",
+      "type": "object",
+      "properties": {
+        "storeName": { "type": "string" },
+        "storeAddress": { "type": "string" },
+        "storePhone": { "type": "string" },
+        "costingMethod": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Store products catalogue"
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Completed transactions"
+    },
+    "/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Registered customers"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Recorded business expenses"
+    },
+    "/settings/{settingId}": {
+      "schema": "BusinessSetting",
+      "description": "Business settings"
+    }
+  }
+}

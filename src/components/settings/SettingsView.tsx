@@ -1,38 +1,32 @@
 import React, { useEffect, useState } from 'react';
 import { db, resetDatabaseWithSeed } from '../../db/indexedDB';
-import { BusinessSettings, CostingMethod } from '../../types';
+import { BusinessSettings } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { GoogleSignInBtn } from '../common/GoogleSignInBtn';
 import { ConfirmModal } from '../common/ConfirmModal';
-import { googleSignIn, getAccessToken, logoutGoogle } from '../../services/auth';
-import {
-  createGoogleSpreadsheet,
-  syncAllToGoogleSheets,
-  linkExistingSpreadsheet,
-  disconnectSpreadsheet,
-} from '../../services/sheetsService';
+import { signInWithEmail, signUpWithEmail } from '../../services/auth';
 import { ReceiptSettingsPanel } from './ReceiptSettingsPanel';
+import firebaseConfig from '../../../firebase-applet-config.json';
 import {
   Settings,
-  Store,
   Layers,
   Percent,
   Printer,
-  FileSpreadsheet,
+  Cloud,
   RefreshCw,
-  ExternalLink,
   Save,
   RotateCcw,
   CheckCircle2,
   AlertCircle,
   Database,
-  Receipt,
-  Cpu,
-  Link,
-  Unlink,
   Activity,
-  AlertTriangle,
-  Sparkles,
+  UserCheck,
+  LogOut,
+  Download,
+  UploadCloud,
+  Mail,
+  Lock,
+  Info,
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
@@ -44,15 +38,19 @@ export const SettingsView: React.FC = () => {
     isOnline,
     isSimulatedOffline,
     toggleSimulateOffline,
-    setSyncModalOpen,
     googleConnectionStatus,
     googleUserEmail,
-    reconnectGoogle,
-    testSheetsConnection,
+    googleUserName,
+    googleUserPhoto,
+    loginGoogle,
+    logoutGoogleUser,
+    testFirestore,
+    restoreFromCloud,
     syncNow,
+    isSyncing,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'receipt' | 'accounting' | 'sheets' | 'system'>('receipt');
+  const [activeTab, setActiveTab] = useState<'receipt' | 'accounting' | 'cloud' | 'system'>('receipt');
 
   const [formData, setFormData] = useState<BusinessSettings>({
     storeName: '',
@@ -68,19 +66,24 @@ export const SettingsView: React.FC = () => {
   });
 
   const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
-  const [isSyncingSheets, setIsSyncingSheets] = useState(false);
-  const [isCreatingSheet, setIsCreatingSheet] = useState(false);
-  const [isReconnecting, setIsReconnecting] = useState(false);
   const [isTestingConn, setIsTestingConn] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; title?: string } | null>(null);
+  const [isRestoringData, setIsRestoringData] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    latencyMs?: number;
+    databaseId?: string;
+  } | null>(null);
 
-  // Manual Spreadsheet link state
-  const [manualSheetInput, setManualSheetInput] = useState('');
-  const [isLinkingManual, setIsLinkingManual] = useState(false);
-  const [showManualLinkInput, setShowManualLinkInput] = useState(false);
+  // Email/Password login modal state
+  const [showEmailAuthForm, setShowEmailAuthForm] = useState(false);
+  const [emailInput, setEmailInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
 
-  // Disconnect confirmation modal
-  const [isDisconnectConfirmOpen, setIsDisconnectConfirmOpen] = useState(false);
+  // Restore confirmation modal
+  const [isRestoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
 
   // Reset confirmation
   const [isResetConfirmOpen, setResetConfirmOpen] = useState(false);
@@ -124,16 +127,37 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handleReconnect = async () => {
-    setIsReconnecting(true);
-    setTestResult(null);
+  const handleGoogleLogin = async () => {
+    setIsSigningInGoogle(true);
     try {
-      const ok = await reconnectGoogle();
-      if (ok) {
-        showToast('Koneksi Google Sheets berhasil dipulihkan!', 'success');
-      }
+      await loginGoogle();
     } finally {
-      setIsReconnecting(false);
+      setIsSigningInGoogle(false);
+    }
+  };
+
+  const handleEmailAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!emailInput || !passwordInput) {
+      showToast('Email dan kata sandi wajib diisi.', 'error');
+      return;
+    }
+    setIsSubmittingAuth(true);
+    try {
+      if (authMode === 'signup') {
+        await signUpWithEmail(emailInput, passwordInput);
+        showToast('Pendaftaran akun berhasil!', 'success');
+      } else {
+        await signInWithEmail(emailInput, passwordInput);
+        showToast('Berhasil masuk dengan email!', 'success');
+      }
+      setShowEmailAuthForm(false);
+      setEmailInput('');
+      setPasswordInput('');
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal autentikasi email', 'error');
+    } finally {
+      setIsSubmittingAuth(false);
     }
   };
 
@@ -141,75 +165,23 @@ export const SettingsView: React.FC = () => {
     setIsTestingConn(true);
     setTestResult(null);
     try {
-      const res = await testSheetsConnection();
+      const res = await testFirestore();
       setTestResult(res);
     } finally {
       setIsTestingConn(false);
     }
   };
 
-  const handleLinkExistingSheet = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualSheetInput.trim()) {
-      showToast('Masukkan URL atau ID Google Spreadsheet.', 'error');
-      return;
-    }
-
-    setIsLinkingManual(true);
+  const handleConfirmRestore = async () => {
+    setIsRestoringData(true);
+    setRestoreConfirmOpen(false);
     try {
-      const res = await linkExistingSpreadsheet(manualSheetInput.trim());
-      showToast(`Berhasil tersambung ke Google Spreadsheet: "${res.title}"!`, 'success');
-      setManualSheetInput('');
-      setShowManualLinkInput(false);
-      await refreshSettings();
-      await syncNow();
+      await restoreFromCloud();
+      showToast('Data berhasil dipulihkan dari Cloud Firestore!', 'success');
     } catch (err: any) {
-      showToast(err?.message || 'Gagal menautkan spreadsheet.', 'error');
+      showToast(err?.message || 'Gagal memulihkan data dari Cloud', 'error');
     } finally {
-      setIsLinkingManual(false);
-    }
-  };
-
-  const handleDisconnectSpreadsheet = async () => {
-    try {
-      await disconnectSpreadsheet();
-      setIsDisconnectConfirmOpen(false);
-      setTestResult(null);
-      showToast('Spreadsheet Google Sheets telah diputuskan dari sistem.', 'info');
-      await refreshSettings();
-    } catch (err: any) {
-      showToast(err?.message || 'Gagal memutuskan sambungan', 'error');
-    }
-  };
-
-  const handleCreateOrLinkSheet = async () => {
-    try {
-      setIsCreatingSheet(true);
-      const created = await createGoogleSpreadsheet(`${formData.storeName || 'Toko Berkah'} - POS Database`);
-      showToast('Spreadsheet Google Sheets dengan 15 tab PRD berhasil dibuat!', 'success');
-      await refreshSettings();
-    } catch (err: any) {
-      showToast(err?.message || 'Gagal membuat Google Spreadsheet', 'error');
-    } finally {
-      setIsCreatingSheet(false);
-    }
-  };
-
-  const handleSyncToSheets = async () => {
-    try {
-      setIsSyncingSheets(true);
-      const res = await syncAllToGoogleSheets();
-      if (res.success) {
-        showToast(
-          `Sinkronisasi berhasil! ${res.syncedCounts.produk} produk, ${res.syncedCounts.penjualan} penjualan diperbarui di Google Sheets.`,
-          'success'
-        );
-        await refreshSettings();
-      }
-    } catch (err: any) {
-      showToast(err?.message || 'Gagal sinkronisasi data ke Google Sheets', 'error');
-    } finally {
-      setIsSyncingSheets(false);
+      setIsRestoringData(false);
     }
   };
 
@@ -218,14 +190,10 @@ export const SettingsView: React.FC = () => {
       await resetDatabaseWithSeed();
       await refreshSettings();
       showToast('Database berhasil di-reset ke data demo ritel Indonesia!', 'success');
-    } catch (err: any) {
+    } catch {
       showToast('Gagal mereset database', 'error');
     }
   };
-
-  const isSheetsConnected = googleConnectionStatus === 'CONNECTED' && Boolean(settings?.spreadsheetId);
-  const isSheetsDisconnectedOrExpired =
-    Boolean(settings?.spreadsheetId) && (googleConnectionStatus === 'EXPIRED' || googleConnectionStatus === 'DISCONNECTED');
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-5xl mx-auto">
@@ -233,7 +201,7 @@ export const SettingsView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="p-2.5 rounded-xl bg-slate-900 text-white shadow-sm">
+            <div className="p-2.5 rounded-xl bg-slate-900 text-white shadow-xs">
               <Settings className="w-6 h-6" />
             </div>
             <div>
@@ -241,7 +209,7 @@ export const SettingsView: React.FC = () => {
                 Pengaturan Sistem & Toko
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Konfigurasi format struk belanja, kebijakan akuntansi HPP, dan sambungan Google Sheets
+                Konfigurasi format struk belanja, kebijakan akuntansi HPP, dan Cloud Database Firestore
               </p>
             </div>
           </div>
@@ -272,18 +240,15 @@ export const SettingsView: React.FC = () => {
             <span>Akuntansi & Pajak</span>
           </button>
           <button
-            onClick={() => setActiveTab('sheets')}
+            onClick={() => setActiveTab('cloud')}
             className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
-              activeTab === 'sheets'
-                ? 'bg-white text-slate-900 shadow-xs'
+              activeTab === 'cloud'
+                ? 'bg-white text-blue-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Google Sheets</span>
-            {isSheetsDisconnectedOrExpired && (
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            )}
+            <Cloud className="w-3.5 h-3.5 text-blue-600" />
+            <span>Cloud & Akun Google</span>
           </button>
           <button
             onClick={() => setActiveTab('system')}
@@ -305,7 +270,6 @@ export const SettingsView: React.FC = () => {
       {/* Tab 2: Accounting (Costing Method) & Tax */}
       {activeTab === 'accounting' && (
         <div className="space-y-6 animate-in fade-in duration-150">
-          {/* Action button header */}
           <div className="flex justify-between items-center">
             <p className="text-xs text-slate-500">
               Konfigurasi metode HPP FIFO / Average dan persentase tarif pajak PPN transaksi
@@ -319,7 +283,7 @@ export const SettingsView: React.FC = () => {
             </button>
           </div>
 
-          {/* Metode HPP */}
+          {/* Costing Method FIFO / Average */}
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
               <Layers className="w-5 h-5 text-purple-600" />
@@ -390,7 +354,7 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          {/* Pajak PPN */}
+          {/* Tax Rate (PPN) */}
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
               <Percent className="w-5 h-5 text-emerald-600" />
@@ -433,273 +397,289 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 3: Database Google Sheets Integration */}
-      {activeTab === 'sheets' && (
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-5 animate-in fade-in duration-150">
-          {/* Header Bar */}
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
-                <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+      {/* Tab 3: Cloud Database Firestore & Google Auth (Replaces Discontinued Google Sheets) */}
+      {activeTab === 'cloud' && (
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs space-y-6 animate-in fade-in duration-150">
+          {/* Discontinue Google Sheets Notice Banner */}
+          <div className="p-4 bg-amber-50/90 border border-amber-300 rounded-2xl flex items-start gap-3">
+            <div className="p-2 bg-amber-200 text-amber-900 rounded-xl shrink-0 mt-0.5">
+              <Info className="w-5 h-5 text-amber-800" />
+            </div>
+            <div className="text-xs text-amber-950 space-y-1">
+              <div className="font-bold flex items-center gap-2">
+                <span>Pemberitahuan: Database Google Sheets Telah Dihentikan (Discontinue)</span>
+                <span className="px-2 py-0.5 bg-amber-200 text-amber-900 rounded text-[10px] font-black uppercase">
+                  Pembaruan Sistem
+                </span>
               </div>
-              <div>
-                <h2 className="font-bold text-slate-900 text-sm">
-                  Koneksi Database Google Sheets Cloud
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Sinkronisasi offline-first otomatis antara IndexedDB lokal dan Google Sheets
-                </p>
+              <p className="leading-relaxed text-[11px] text-amber-900">
+                Koneksi database melalui Google Sheets resmi dihentikan karena keterbatasan kuota spreadsheet API,
+                latensi jaringan, dan masa berlaku token otorisasi 1 jam. Sistem kini beralih sepenuhnya ke
+                <strong> Firebase Cloud Firestore</strong>: database cloud real-time berkecepatan tinggi, tanpa token kadaluarsa,
+                dengan pencadangan otomatis dan autentikasi akun Google terpusat.
+              </p>
+            </div>
+          </div>
+
+          {/* Section 1: Google Account Authentication */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-blue-100 text-blue-800 rounded-xl">
+                  <UserCheck className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-slate-900 text-sm">
+                    Autentikasi Akun Google & Keamanan
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Masuk dengan Akun Google untuk mengamankan data dan mengaktifkan sinkronisasi cloud
+                  </p>
+                </div>
               </div>
+
+              {googleConnectionStatus === 'CONNECTED' ? (
+                <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1.5 shadow-2xs">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Akun Google Terhubung</span>
+                </span>
+              ) : (
+                <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                  Belum Masuk
+                </span>
+              )}
             </div>
 
-            {/* Connection Status Pill */}
-            {isSheetsConnected ? (
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1.5 shadow-2xs">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Terhubung Aktif</span>
-              </span>
-            ) : isSheetsDisconnectedOrExpired ? (
-              <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1.5 shadow-2xs">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                <span>Sambungan Terputus</span>
-              </span>
+            {/* Authenticated Profile Card */}
+            {googleConnectionStatus === 'CONNECTED' ? (
+              <div className="p-5 bg-gradient-to-r from-blue-50/70 to-indigo-50/50 rounded-2xl border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  {googleUserPhoto ? (
+                    <img
+                      src={googleUserPhoto}
+                      alt="Google Avatar"
+                      className="w-12 h-12 rounded-full border-2 border-white shadow-xs object-cover"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-blue-600 text-white font-bold text-base flex items-center justify-center shadow-xs">
+                      {(googleUserName || googleUserEmail || 'G').substring(0, 2).toUpperCase()}
+                    </div>
+                  )}
+
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">
+                      {googleUserName || 'Pengguna Google Terverifikasi'}
+                    </h3>
+                    <p className="font-mono text-xs text-slate-600 mt-0.5">
+                      {googleUserEmail}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        Sesi Permanen (Firebase Auth)
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                        Akses Penuh Cloud POS
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    onClick={logoutGoogleUser}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 font-bold text-xs shadow-2xs transition-colors cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                    <span>Keluar Akun Google</span>
+                  </button>
+                </div>
+              </div>
             ) : (
-              <span className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                Belum Disambungkan
-              </span>
+              <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col items-center justify-center text-center space-y-3">
+                <p className="text-xs text-slate-600 max-w-md">
+                  Login dengan Akun Google menggunakan Firebase Authentication tanpa batasan token 1 jam.
+                  Identitas Anda terverifikasi secara aman dan sinkronisasi cloud langsung aktif.
+                </p>
+
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <GoogleSignInBtn
+                    onClick={handleGoogleLogin}
+                    loading={isSigningInGoogle}
+                    text="Masuk dengan Akun Google"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowEmailAuthForm(!showEmailAuthForm)}
+                    className="px-4 py-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-2"
+                  >
+                    <Mail className="w-4 h-4 text-slate-500" />
+                    <span>Login Email & Sandi</span>
+                  </button>
+                </div>
+
+                {/* Email / Password Form toggle */}
+                {showEmailAuthForm && (
+                  <form
+                    onSubmit={handleEmailAuthSubmit}
+                    className="w-full max-w-sm mt-3 p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3 text-left animate-in fade-in"
+                  >
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="font-bold text-slate-800 text-xs">
+                        {authMode === 'signin' ? 'Masuk dengan Email' : 'Daftar Akun Baru'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setAuthMode(authMode === 'signin' ? 'signup' : 'signin')}
+                        className="text-[11px] text-blue-600 font-bold hover:underline"
+                      >
+                        {authMode === 'signin' ? 'Buat akun baru' : 'Sudah punya akun? Masuk'}
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Email
+                      </label>
+                      <input
+                        type="email"
+                        value={emailInput}
+                        onChange={(e) => setEmailInput(e.target.value)}
+                        placeholder="nama@toko.com"
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Kata Sandi
+                      </label>
+                      <input
+                        type="password"
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        placeholder="Minimal 6 karakter"
+                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl"
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isSubmittingAuth}
+                      className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isSubmittingAuth
+                        ? 'Memproses...'
+                        : authMode === 'signin'
+                        ? 'Masuk ke POS'
+                        : 'Daftarkan Akun'}
+                    </button>
+                  </form>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Alert: Sambungan Terputus / Reconnect Prompt */}
-          {isSheetsDisconnectedOrExpired && (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
-              <div className="flex items-start gap-3">
-                <div className="p-2 bg-amber-200/60 text-amber-800 rounded-xl shrink-0 mt-0.5">
-                  <AlertTriangle className="w-5 h-5 text-amber-700" />
+          {/* Section 2: Cloud Firestore Database Configuration & Actions */}
+          <div className="space-y-4 pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
+                  <Database className="w-5 h-5 text-emerald-600" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-amber-950 text-xs">
-                    Sambungan Google Sheets Terputus
-                  </h4>
-                  <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
-                    Sesi otentikasi Google OAuth Anda telah berakhir atau jaringan sempat terputus.
-                    Seluruh transaksi kasir Anda tetap aman di IndexedDB offline lokal. Silakan klik tombol di bawah untuk menyambungkan kembali.
+                  <h2 className="font-bold text-slate-900 text-sm">
+                    Database Cloud Firestore (Pengganti Google Sheets)
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Penyimpanan enterprise NoSQL untuk sinkronisasi data master produk, transaksi kasir, & piutang
                   </p>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleReconnect}
-                disabled={isReconnecting}
-                className="px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white font-bold text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
+              <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-900 border border-blue-200 flex items-center gap-1.5 shadow-2xs">
+                <Cloud className="w-3.5 h-3.5 text-blue-600" />
+                <span>Cloud Firestore Siap</span>
+              </span>
+            </div>
+
+            {/* Test Connection Live Result Banner */}
+            {testResult && (
+              <div
+                className={`p-3.5 rounded-2xl text-xs font-semibold flex items-center gap-2.5 ${
+                  testResult.success
+                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-900'
+                    : 'bg-rose-50 border border-rose-200 text-rose-900'
+                }`}
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isReconnecting ? 'animate-spin' : ''}`} />
-                <span>{isReconnecting ? 'Menyambungkan...' : 'Hubungkan Ulang Sekarang'}</span>
-              </button>
-            </div>
-          )}
-
-          {/* Test Connection Live Result Banner */}
-          {testResult && (
-            <div
-              className={`p-3.5 rounded-2xl text-xs font-semibold flex items-center gap-2.5 ${
-                testResult.success
-                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-900'
-                  : 'bg-rose-50 border border-rose-200 text-rose-900'
-              }`}
-            >
-              {testResult.success ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              ) : (
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-              )}
-              <span>{testResult.message}</span>
-            </div>
-          )}
-
-          <div className="space-y-4 text-xs">
-            {/* Authenticated Account Card */}
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <span className="font-bold text-slate-800 block text-xs">
-                  Akun Google Terautentikasi:
-                </span>
-                <p className="text-slate-600 mt-0.5 font-mono text-xs">
-                  {googleUserEmail || 'Belum ada akun Google terhubung'}
-                </p>
-                <span
-                  className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                    googleConnectionStatus === 'CONNECTED'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : googleConnectionStatus === 'EXPIRED'
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-slate-200 text-slate-700'
-                  }`}
-                >
-                  Status Token:{' '}
-                  {googleConnectionStatus === 'CONNECTED'
-                    ? 'Aktif (Siap Sinkron)'
-                    : googleConnectionStatus === 'EXPIRED'
-                    ? 'Kadaluarsa / Perlu Hubungkan Ulang'
-                    : 'Tidak Aktif'}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleReconnect}
-                  disabled={isReconnecting}
-                  className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                  title="Masuk atau perbarui token akses Google"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${isReconnecting ? 'animate-spin' : ''}`} />
-                  <span>{isReconnecting ? 'Menghubungkan...' : 'Hubungkan Ulang Akun'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Active Spreadsheet Details */}
-            {settings?.spreadsheetId ? (
-              <div className="p-5 bg-emerald-50/60 rounded-3xl border border-emerald-200 space-y-3.5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-900 block">
-                      Google Spreadsheet Aktif:
-                    </span>
-                    <span className="font-mono text-emerald-950 font-bold text-xs select-all block mt-0.5">
-                      {settings.spreadsheetId}
-                    </span>
-                  </div>
-
-                  <a
-                    href={settings.spreadsheetUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-100 font-bold shadow-2xs shrink-0"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>Buka Spreadsheet</span>
-                  </a>
-                </div>
-
-                {settings.lastSyncTime && (
-                  <p className="text-[11px] text-emerald-700 flex items-center gap-1.5">
-                    <span>Terakhir sinkronisasi sukses:</span>
-                    <strong className="font-mono">
-                      {new Date(settings.lastSyncTime).toLocaleString('id-ID')}
-                    </strong>
-                  </p>
+                {testResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
                 )}
-
-                {/* Spreadsheet Control Actions */}
-                <div className="pt-2 flex flex-wrap items-center gap-2.5 border-t border-emerald-200/60">
-                  <button
-                    disabled={isSyncingSheets}
-                    onClick={handleSyncToSheets}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold shadow-xs cursor-pointer disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheets ? 'animate-spin' : ''}`} />
-                    <span>{isSyncingSheets ? 'Menyinkronkan...' : 'Sinkronkan Sekarang'}</span>
-                  </button>
-
-                  <button
-                    disabled={isTestingConn}
-                    onClick={handleTestConnection}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-100/70 border border-emerald-300 text-emerald-800 font-semibold shadow-2xs cursor-pointer disabled:opacity-50"
-                    title="Uji kelayakan sambungan ke Google Sheets API"
-                  >
-                    <Activity className={`w-3.5 h-3.5 ${isTestingConn ? 'animate-pulse' : ''}`} />
-                    <span>{isTestingConn ? 'Menguji...' : 'Uji Sambungan'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setIsDisconnectConfirmOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 font-semibold shadow-2xs cursor-pointer ml-auto"
-                    title="Putuskan spreadsheet ini dari sistem"
-                  >
-                    <Unlink className="w-3.5 h-3.5 text-rose-500" />
-                    <span>Putuskan Sambungan</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="p-5 bg-slate-50 rounded-3xl border border-slate-200 space-y-3">
-                <p className="font-semibold text-slate-800 text-xs">
-                  Pilih metode penyambungan database Google Sheets:
-                </p>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    disabled={isCreatingSheet}
-                    onClick={handleCreateOrLinkSheet}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer disabled:opacity-50 shadow-xs"
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>{isCreatingSheet ? 'Membuat Spreadsheet...' : 'Buat Database Google Sheets Baru'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowManualLinkInput(!showManualLinkInput)}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-semibold cursor-pointer shadow-xs"
-                  >
-                    <Link className="w-4 h-4 text-slate-500" />
-                    <span>Sambungkan Spreadsheet yang Sudah Ada</span>
-                  </button>
-                </div>
+                <span>{testResult.message}</span>
               </div>
             )}
 
-            {/* Manual Link Input Form */}
-            {(showManualLinkInput || (!settings?.spreadsheetId && showManualLinkInput)) && (
-              <form
-                onSubmit={handleLinkExistingSheet}
-                className="p-4 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-3 animate-in fade-in"
-              >
-                <div>
-                  <h4 className="font-bold text-blue-950 text-xs flex items-center gap-1.5">
-                    <Link className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Tautkan Google Spreadsheet yang Sudah Ada</span>
-                  </h4>
-                  <p className="text-[11px] text-blue-800 mt-0.5">
-                    Tempelkan link (URL) atau ID Google Spreadsheet Anda yang pernah dibuat sebelumnya untuk menyambungkan kembali.
-                  </p>
+            {/* Database Metadata Box */}
+            <div className="p-5 bg-slate-50 rounded-3xl border border-slate-200 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div className="p-3 bg-white rounded-2xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                    Firestore Database ID:
+                  </span>
+                  <span className="font-mono text-xs font-bold text-slate-900 block mt-1 break-all select-all">
+                    {firebaseConfig.firestoreDatabaseId || '(default)'}
+                  </span>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    value={manualSheetInput}
-                    onChange={(e) => setManualSheetInput(e.target.value)}
-                    placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
-                    className="flex-1 px-3 py-2 text-xs bg-white border border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isLinkingManual}
-                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                  >
-                    {isLinkingManual ? 'Memverifikasi...' : 'Verifikasi & Sambungkan'}
-                  </button>
+                <div className="p-3 bg-white rounded-2xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                    Google Cloud Project:
+                  </span>
+                  <span className="font-mono text-xs font-bold text-slate-900 block mt-1">
+                    {firebaseConfig.projectId}
+                  </span>
                 </div>
-              </form>
-            )}
+              </div>
 
-            {/* Change existing spreadsheet link option */}
-            {settings?.spreadsheetId && !showManualLinkInput && (
-              <div className="pt-1">
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                {/* 1. Sync local data to Firestore */}
                 <button
-                  type="button"
-                  onClick={() => setShowManualLinkInput(true)}
-                  className="text-[11px] font-semibold text-slate-500 hover:text-emerald-700 underline cursor-pointer"
+                  onClick={syncNow}
+                  disabled={isSyncing || !isOnline}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                  title="Upload semua produk, transaksi, dan data ke Cloud Firestore"
                 >
-                  Ingin mengganti atau menautkan ke file spreadsheet lain? Klik di sini.
+                  <UploadCloud className={`w-4 h-4 ${isSyncing ? 'animate-bounce' : ''}`} />
+                  <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronkan Data ke Cloud Firestore'}</span>
+                </button>
+
+                {/* 2. Test Connection */}
+                <button
+                  onClick={handleTestConnection}
+                  disabled={isTestingConn || !isOnline}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                  title="Uji kelayakan sambungan ke Cloud Firestore"
+                >
+                  <Activity className={`w-4 h-4 text-emerald-600 ${isTestingConn ? 'animate-pulse' : ''}`} />
+                  <span>{isTestingConn ? 'Menguji...' : 'Uji Sambungan Firestore'}</span>
+                </button>
+
+                {/* 3. Pull / Restore Data from Cloud */}
+                <button
+                  onClick={() => setRestoreConfirmOpen(true)}
+                  disabled={isRestoringData || !isOnline}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-amber-50 border border-amber-300 text-amber-900 font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer ml-auto disabled:opacity-50"
+                  title="Tarik data produk dan transaksi dari Cloud ke IndexedDB perangkat ini"
+                >
+                  <Download className={`w-4 h-4 text-amber-700 ${isRestoringData ? 'animate-bounce' : ''}`} />
+                  <span>{isRestoringData ? 'Memulihkan...' : 'Tarik Data dari Cloud'}</span>
                 </button>
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
@@ -773,14 +753,14 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* Disconnect Spreadsheet Confirmation Modal */}
+      {/* Restore Data Confirmation Modal */}
       <ConfirmModal
-        isOpen={isDisconnectConfirmOpen}
-        onClose={() => setIsDisconnectConfirmOpen(false)}
-        onConfirm={handleDisconnectSpreadsheet}
-        title="Putuskan Sambungan Google Sheets?"
-        message="Spreadsheet saat ini akan dilepas dari sistem POS. Seluruh data transaksi di IndexedDB lokal Anda tetap aman dan tidak akan dihapus. Anda dapat menyambungkannya kembali kapan saja."
-        confirmText="Putuskan Sambungan"
+        isOpen={isRestoreConfirmOpen}
+        onClose={() => setRestoreConfirmOpen(false)}
+        onConfirm={handleConfirmRestore}
+        title="Tarik & Pulihkan Data dari Cloud Firestore?"
+        message="Data master produk, transaksi, pelanggan, dan piutang yang tersimpan di Cloud Firestore akan diunduh dan digabungkan ke penyimpanan IndexedDB lokal di perangkat ini."
+        confirmText="Ya, Tarik Data"
         cancelText="Batal"
         isDestructive={false}
       />

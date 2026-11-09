@@ -6,140 +6,126 @@ import {
   onAuthStateChanged,
   User,
   signOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 export const auth = getAuth(app);
 
-export const SCOPES = [
-  'https://www.googleapis.com/auth/spreadsheets',
-  'https://www.googleapis.com/auth/drive.file',
-];
-
-const provider = new GoogleAuthProvider();
-SCOPES.forEach((scope) => provider.addScope(scope));
-provider.setCustomParameters({
-  prompt: 'consent',
-  access_type: 'offline',
+// Clean Google Auth Provider (Standard Google Profile & Email, NO deprecated Sheets/Drive scopes)
+const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope('email');
+googleProvider.addScope('profile');
+googleProvider.setCustomParameters({
+  prompt: 'select_account',
 });
 
-// Storage keys for persistent reconnect handling
+// Storage keys for persistent state cache
 const STORAGE_KEYS = {
-  TOKEN: 'pos_google_sheets_token',
-  EXPIRES_AT: 'pos_google_sheets_token_expires',
-  USER_EMAIL: 'pos_google_sheets_user_email',
-  USER_NAME: 'pos_google_sheets_user_name',
-  LAST_CONNECTED: 'pos_google_sheets_last_connected',
+  USER_EMAIL: 'pos_cloud_user_email',
+  USER_NAME: 'pos_cloud_user_name',
+  USER_PHOTO: 'pos_cloud_user_photo',
+  USER_UID: 'pos_cloud_user_uid',
+  AUTH_METHOD: 'pos_cloud_auth_method',
+  LAST_CONNECTED: 'pos_cloud_last_connected',
 };
-
-let isSigningIn = false;
-let cachedAccessToken: string | null = null;
-let cachedExpiresAt: number = 0;
-
-// Load persisted token on module load
-try {
-  if (typeof window !== 'undefined') {
-    const storedToken = localStorage.getItem(STORAGE_KEYS.TOKEN);
-    const storedExpires = Number(localStorage.getItem(STORAGE_KEYS.EXPIRES_AT) || 0);
-    if (storedToken && storedExpires > Date.now()) {
-      cachedAccessToken = storedToken;
-      cachedExpiresAt = storedExpires;
-    }
-  }
-} catch {
-  // Ignore localStorage read errors in restricted contexts
-}
 
 export type GoogleConnectionStatus = 'CONNECTED' | 'EXPIRED' | 'DISCONNECTED';
 
+let currentUserCache: User | null = null;
+
+// Synchronous check for UI
 export const getGoogleConnectionStatus = (): GoogleConnectionStatus => {
   if (typeof window === 'undefined') return 'DISCONNECTED';
-  const token = cachedAccessToken || localStorage.getItem(STORAGE_KEYS.TOKEN);
-  const expiresAt = cachedExpiresAt || Number(localStorage.getItem(STORAGE_KEYS.EXPIRES_AT) || 0);
-
-  if (!token) return 'DISCONNECTED';
-  if (Date.now() >= expiresAt) return 'EXPIRED';
-  return 'CONNECTED';
+  if (auth.currentUser || currentUserCache) return 'CONNECTED';
+  const savedEmail = localStorage.getItem(STORAGE_KEYS.USER_EMAIL);
+  return savedEmail ? 'CONNECTED' : 'DISCONNECTED';
 };
 
-export const getStoredGoogleUser = (): { email: string | null; name: string | null; lastConnected: string | null } => {
-  if (typeof window === 'undefined') return { email: null, name: null, lastConnected: null };
+export const getStoredGoogleUser = (): {
+  email: string | null;
+  name: string | null;
+  photoUrl: string | null;
+  uid: string | null;
+  lastConnected: string | null;
+  authMethod: string | null;
+} => {
+  if (typeof window === 'undefined') {
+    return { email: null, name: null, photoUrl: null, uid: null, lastConnected: null, authMethod: null };
+  }
+  const u = auth.currentUser || currentUserCache;
   return {
-    email: localStorage.getItem(STORAGE_KEYS.USER_EMAIL) || auth.currentUser?.email || null,
-    name: localStorage.getItem(STORAGE_KEYS.USER_NAME) || auth.currentUser?.displayName || null,
+    email: u?.email || localStorage.getItem(STORAGE_KEYS.USER_EMAIL) || null,
+    name: u?.displayName || localStorage.getItem(STORAGE_KEYS.USER_NAME) || null,
+    photoUrl: u?.photoURL || localStorage.getItem(STORAGE_KEYS.USER_PHOTO) || null,
+    uid: u?.uid || localStorage.getItem(STORAGE_KEYS.USER_UID) || null,
     lastConnected: localStorage.getItem(STORAGE_KEYS.LAST_CONNECTED) || null,
+    authMethod: localStorage.getItem(STORAGE_KEYS.AUTH_METHOD) || 'google',
   };
 };
 
-export const clearAuthSession = () => {
-  cachedAccessToken = null;
-  cachedExpiresAt = 0;
+const persistUserToStorage = (user: User | null, method: string = 'google') => {
+  if (typeof window === 'undefined') return;
   try {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(STORAGE_KEYS.TOKEN);
-      localStorage.removeItem(STORAGE_KEYS.EXPIRES_AT);
-      window.dispatchEvent(new CustomEvent('google-auth-changed', { detail: { status: 'DISCONNECTED' } }));
+    if (user) {
+      currentUserCache = user;
+      if (user.email) localStorage.setItem(STORAGE_KEYS.USER_EMAIL, user.email);
+      if (user.displayName) localStorage.setItem(STORAGE_KEYS.USER_NAME, user.displayName);
+      if (user.photoURL) localStorage.setItem(STORAGE_KEYS.USER_PHOTO, user.photoURL);
+      if (user.uid) localStorage.setItem(STORAGE_KEYS.USER_UID, user.uid);
+      localStorage.setItem(STORAGE_KEYS.AUTH_METHOD, method);
+      localStorage.setItem(STORAGE_KEYS.LAST_CONNECTED, new Date().toISOString());
+      window.dispatchEvent(
+        new CustomEvent('google-auth-changed', {
+          detail: { status: 'CONNECTED', email: user.email, user },
+        })
+      );
+    } else {
+      currentUserCache = null;
+      localStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
+      localStorage.removeItem(STORAGE_KEYS.USER_NAME);
+      localStorage.removeItem(STORAGE_KEYS.USER_PHOTO);
+      localStorage.removeItem(STORAGE_KEYS.USER_UID);
+      localStorage.removeItem(STORAGE_KEYS.AUTH_METHOD);
+      window.dispatchEvent(
+        new CustomEvent('google-auth-changed', {
+          detail: { status: 'DISCONNECTED' },
+        })
+      );
     }
-  } catch {
-    // Ignore
+  } catch (err) {
+    console.warn('Storage persistence error:', err);
   }
 };
 
+// Initialize auth state listener
 export const initAuth = (
-  onAuthSuccess?: (user: User, token: string) => void,
+  onAuthSuccess?: (user: User) => void,
   onAuthFailure?: () => void
 ) => {
-  return onAuthStateChanged(auth, async (user: User | null) => {
+  return onAuthStateChanged(auth, (user: User | null) => {
     if (user) {
-      const token = await getAccessToken();
-      if (token) {
-        if (onAuthSuccess) onAuthSuccess(user, token);
-      } else if (!isSigningIn) {
-        if (onAuthFailure) onAuthFailure();
-      }
+      currentUserCache = user;
+      persistUserToStorage(user);
+      if (onAuthSuccess) onAuthSuccess(user);
     } else {
-      clearAuthSession();
+      currentUserCache = null;
       if (onAuthFailure) onAuthFailure();
     }
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+/**
+ * Modern Google Sign-In with Firebase Authentication
+ * Does not require Google Sheets scopes; no 1-hour token expiration.
+ */
+export const googleSignIn = async (): Promise<{ user: User } | null> => {
   try {
-    isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Gagal mendapatkan access token dari Google OAuth. Pastikan izin akses Google Sheets diberikan.');
-    }
-
-    const token = credential.accessToken;
-    // Google access tokens are valid for 1 hour (3600 seconds). We set 55 minutes to be safe.
-    const expiresAt = Date.now() + 55 * 60 * 1000;
-
-    cachedAccessToken = token;
-    cachedExpiresAt = expiresAt;
-
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem(STORAGE_KEYS.TOKEN, token);
-        localStorage.setItem(STORAGE_KEYS.EXPIRES_AT, String(expiresAt));
-        if (result.user.email) {
-          localStorage.setItem(STORAGE_KEYS.USER_EMAIL, result.user.email);
-        }
-        if (result.user.displayName) {
-          localStorage.setItem(STORAGE_KEYS.USER_NAME, result.user.displayName);
-        }
-        localStorage.setItem(STORAGE_KEYS.LAST_CONNECTED, new Date().toISOString());
-
-        window.dispatchEvent(new CustomEvent('google-auth-changed', { detail: { status: 'CONNECTED', email: result.user.email } }));
-      }
-    } catch (e) {
-      console.warn('Failed to persist token to localStorage:', e);
-    }
-
-    return { user: result.user, accessToken: token };
+    const result = await signInWithPopup(auth, googleProvider);
+    persistUserToStorage(result.user, 'google');
+    return { user: result.user };
   } catch (error: any) {
     if (
       error?.code === 'auth/popup-closed-by-user' ||
@@ -148,76 +134,54 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       return null;
     }
     if (error?.code === 'auth/popup-blocked') {
-      throw new Error(
-        'Jendela popup diblokir oleh browser. Mohon izinkan popup di peramban Anda untuk login Google.'
-      );
+      throw new Error('Jendela popup login Google diblokir peramban. Silakan izinkan popup untuk domain ini.');
     }
-    console.warn('Google Sign in error:', error?.message || error);
+    console.error('Google Sign in error:', error);
     throw error;
-  } finally {
-    isSigningIn = false;
   }
 };
 
-export const getAccessToken = async (): Promise<string | null> => {
-  // Check in-memory cache
-  if (cachedAccessToken && cachedExpiresAt > Date.now()) {
-    return cachedAccessToken;
-  }
-
-  // Check persistent storage
-  try {
-    if (typeof window !== 'undefined') {
-      const storedToken = localStorage.getItem(STORAGE_KEYS.TOKEN);
-      const storedExpires = Number(localStorage.getItem(STORAGE_KEYS.EXPIRES_AT) || 0);
-
-      if (storedToken && storedExpires > Date.now()) {
-        cachedAccessToken = storedToken;
-        cachedExpiresAt = storedExpires;
-        return storedToken;
-      }
-
-      // If token expired
-      if (storedToken && storedExpires <= Date.now()) {
-        clearAuthSession();
-        window.dispatchEvent(new CustomEvent('google-auth-changed', { detail: { status: 'EXPIRED' } }));
-      }
-    }
-  } catch {
-    // Ignore storage issues
-  }
-
-  return null;
+/**
+ * Email & Password Sign In
+ */
+export const signInWithEmail = async (email: string, pass: string): Promise<User> => {
+  const cred = await signInWithEmailAndPassword(auth, email, pass);
+  persistUserToStorage(cred.user, 'password');
+  return cred.user;
 };
 
-export const setManualAccessToken = (token: string, expiresInSeconds: number = 3600) => {
-  cachedAccessToken = token;
-  cachedExpiresAt = Date.now() + (expiresInSeconds - 60) * 1000;
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEYS.TOKEN, token);
-      localStorage.setItem(STORAGE_KEYS.EXPIRES_AT, String(cachedExpiresAt));
-      window.dispatchEvent(new CustomEvent('google-auth-changed', { detail: { status: 'CONNECTED' } }));
-    }
-  } catch {
-    // Ignore
-  }
+/**
+ * Email & Password Sign Up
+ */
+export const signUpWithEmail = async (email: string, pass: string): Promise<User> => {
+  const cred = await createUserWithEmailAndPassword(auth, email, pass);
+  persistUserToStorage(cred.user, 'password');
+  return cred.user;
 };
 
+/**
+ * Sign out from Google & Firebase Auth
+ */
 export const logoutGoogle = async () => {
   try {
     await signOut(auth);
-  } catch {
-    // Ignore signOut errors
+  } catch (err) {
+    console.warn('Sign out error:', err);
   }
-  clearAuthSession();
+  persistUserToStorage(null);
+};
+
+// Backward-compatibility wrappers for legacy sheets calls
+export const getAccessToken = async (): Promise<string | null> => {
+  const user = auth.currentUser || currentUserCache;
+  if (!user) return null;
   try {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(STORAGE_KEYS.USER_EMAIL);
-      localStorage.removeItem(STORAGE_KEYS.USER_NAME);
-      localStorage.removeItem(STORAGE_KEYS.LAST_CONNECTED);
-    }
+    return await user.getIdToken();
   } catch {
-    // Ignore
+    return null;
   }
+};
+
+export const clearAuthSession = () => {
+  persistUserToStorage(null);
 };

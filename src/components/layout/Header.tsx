@@ -95,61 +95,30 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onNavigate }
           </span>
         </button>
 
-        {/* Google Sheets Sync Pill */}
-        {settings?.spreadsheetId ? (
-          googleConnectionStatus !== 'CONNECTED' ? (
-            <button
-              onClick={() => setSyncModalOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold rounded-xl bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 transition-colors cursor-pointer shadow-2xs animate-pulse"
-              title="Sambungan Google Sheets terputus. Klik untuk hubungkan ulang."
-            >
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
-              <span className="hidden sm:inline">Sheets Terputus</span>
-            </button>
-          ) : (
-            <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200">
-              <button
-                onClick={() => setSyncModalOpen(true)}
-                disabled={isSyncing}
-                className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                  pendingSyncCount > 0
-                    ? 'bg-amber-100 text-amber-900 hover:bg-amber-200'
-                    : 'text-slate-700 hover:bg-white'
-                }`}
-                title="Lihat antrean atau sinkronisasi ke Google Sheets"
-              >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 text-emerald-700 ${isSyncing ? 'animate-spin' : ''}`}
-                />
-                <span className="hidden sm:inline">
-                  {isSyncing
-                    ? 'Menyinkronkan...'
-                    : pendingSyncCount > 0
-                    ? `Sync (${pendingSyncCount})`
-                    : 'Tersinkron'}
-                </span>
-              </button>
-
-              <a
-                href={settings.spreadsheetUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-white rounded-lg transition-colors"
-                title="Buka Spreadsheet di Google Sheets"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-              </a>
-            </div>
-          )
-        ) : (
+        {/* Cloud Firestore Sync Pill */}
+        <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200">
           <button
-            onClick={() => onNavigate('settings')}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200/70 text-slate-600 border border-slate-200 cursor-pointer"
+            onClick={() => setSyncModalOpen(true)}
+            disabled={isSyncing}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+              pendingSyncCount > 0
+                ? 'bg-amber-100 text-amber-900 hover:bg-amber-200'
+                : 'text-slate-700 hover:bg-white'
+            }`}
+            title="Lihat status antrean atau sinkronisasi ke Cloud Firestore"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500" />
-            <span className="text-[11px]">Sambungkan Google Sheets</span>
+            <RefreshCw
+              className={`w-3.5 h-3.5 text-emerald-700 ${isSyncing ? 'animate-spin' : ''}`}
+            />
+            <span className="hidden sm:inline">
+              {isSyncing
+                ? 'Menyinkronkan...'
+                : pendingSyncCount > 0
+                ? `Cloud Sync (${pendingSyncCount})`
+                : 'Cloud Terhubung'}
+            </span>
           </button>
-        )}
+        </div>
 
         {/* Shift Button */}
         <button

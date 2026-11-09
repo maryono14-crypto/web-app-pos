@@ -28,7 +28,7 @@ export function registerServiceWorker() {
         // Register background sync if supported by browser
         if ('sync' in registration) {
           try {
-            await (registration as any).sync.register('sync-google-sheets');
+            await (registration as any).sync.register('sync-cloud-firestore');
           } catch (e) {
             // Background sync not allowed or ignored
           }

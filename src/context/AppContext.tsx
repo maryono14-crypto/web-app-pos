@@ -7,8 +7,17 @@ import {
   getGoogleConnectionStatus,
   getStoredGoogleUser,
   GoogleConnectionStatus,
+  googleSignIn,
+  logoutGoogle,
+  initAuth,
 } from '../services/auth';
-import { reconnectGoogleSheets, testGoogleSheetsConnection } from '../services/sheetsService';
+import {
+  syncAllToFirestore,
+  restoreFromFirestore,
+  testFirestoreConnection,
+  CloudSyncResult,
+  CloudRestoreResult,
+} from '../services/firestoreSyncService';
 
 interface AppContextType {
   activeUser: UserAccount;
@@ -31,8 +40,16 @@ interface AppContextType {
   setSyncModalOpen: (open: boolean) => void;
   toastMessage: { text: string; type: 'success' | 'error' | 'info' } | null;
   showToast: (text: string, type?: 'success' | 'error' | 'info') => void;
+
+  // Cloud / Google Auth & Firestore
   googleConnectionStatus: GoogleConnectionStatus;
   googleUserEmail: string | null;
+  googleUserName: string | null;
+  googleUserPhoto: string | null;
+  loginGoogle: () => Promise<boolean>;
+  logoutGoogleUser: () => Promise<void>;
+  testFirestore: () => Promise<{ success: boolean; message: string; databaseId?: string }>;
+  restoreFromCloud: () => Promise<CloudRestoreResult>;
   reconnectGoogle: () => Promise<boolean>;
   testSheetsConnection: () => Promise<{ success: boolean; message: string; title?: string }>;
 }
@@ -58,6 +75,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     getGoogleConnectionStatus()
   );
   const [googleUserEmail, setGoogleUserEmail] = useState<string | null>(getStoredGoogleUser().email);
+  const [googleUserName, setGoogleUserName] = useState<string | null>(getStoredGoogleUser().name);
+  const [googleUserPhoto, setGoogleUserPhoto] = useState<string | null>(getStoredGoogleUser().photoUrl);
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToastMessage({ text, type });
@@ -77,12 +96,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const syncNow = async () => {
-    const res = await syncManager.triggerAutoSync();
-    if (res.success) {
-      showToast(res.message || 'Sinkronisasi berhasil!', 'success');
-      await refreshSettings();
-    } else {
-      showToast(res.message || 'Gagal sinkronisasi', 'error');
+    if (!isOnline) {
+      showToast('Perangkat sedang offline. Periksa koneksi internet Anda.', 'info');
+      return;
+    }
+    try {
+      setIsSyncing(true);
+      const res = await syncAllToFirestore();
+      showToast(res.message, 'success');
+      setPendingSyncCount(await syncManager.getPendingCount());
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal sinkronisasi ke Cloud Firestore', 'error');
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -92,40 +118,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     syncManager.setSimulateOffline(nextVal);
     showToast(
       nextVal
-        ? 'Mode simulasi offline diaktifkan. Transaksi akan disimpan di IndexedDB.'
-        : 'Kembali online! Mencoba sinkronisasi otomatis ke Google Sheets...',
+        ? 'Mode simulasi offline diaktifkan. Transaksi tersimpan aman di IndexedDB.'
+        : 'Kembali online! Mencoba sinkronisasi otomatis ke Cloud Firestore...',
       nextVal ? 'info' : 'success'
     );
   };
 
-  const reconnectGoogle = async (): Promise<boolean> => {
-    const res = await reconnectGoogleSheets();
-    if (res.success) {
-      setGoogleConnectionStatus('CONNECTED');
-      const u = getStoredGoogleUser();
-      setGoogleUserEmail(u.email);
-      showToast(res.message, 'success');
-      await refreshSettings();
-      await syncManager.triggerAutoSync();
-      return true;
-    } else {
-      showToast(res.message, 'error');
+  const loginGoogle = async (): Promise<boolean> => {
+    try {
+      const res = await googleSignIn();
+      if (res?.user) {
+        setGoogleConnectionStatus('CONNECTED');
+        setGoogleUserEmail(res.user.email);
+        setGoogleUserName(res.user.displayName);
+        setGoogleUserPhoto(res.user.photoURL);
+        showToast(`Login Google berhasil! Masuk sebagai ${res.user.displayName || res.user.email}`, 'success');
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal masuk dengan akun Google', 'error');
       return false;
     }
   };
 
-  const testSheetsConnection = async () => {
-    const res = await testGoogleSheetsConnection();
+  const logoutGoogleUser = async () => {
+    await logoutGoogle();
+    setGoogleConnectionStatus('DISCONNECTED');
+    setGoogleUserEmail(null);
+    setGoogleUserName(null);
+    setGoogleUserPhoto(null);
+    showToast('Telah keluar dari akun Google.', 'info');
+  };
+
+  const testFirestore = async () => {
+    const res = await testFirestoreConnection();
     if (res.success) {
-      setGoogleConnectionStatus('CONNECTED');
       showToast(res.message, 'success');
     } else {
-      if (res.isAuthExpired) {
-        setGoogleConnectionStatus('EXPIRED');
-      }
       showToast(res.message, 'error');
     }
-    return { success: res.success, message: res.message, title: res.spreadsheetTitle };
+    return res;
+  };
+
+  const restoreFromCloud = async (): Promise<CloudRestoreResult> => {
+    try {
+      const res = await restoreFromFirestore();
+      await refreshSettings();
+      showToast(res.message, 'success');
+      return res;
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal memulihkan data dari cloud', 'error');
+      throw err;
+    }
+  };
+
+  // Backward compatibility methods for previous calls
+  const reconnectGoogle = async (): Promise<boolean> => {
+    return loginGoogle();
+  };
+
+  const testSheetsConnection = async () => {
+    const res = await testFirestoreConnection();
+    return { success: res.success, message: res.message, title: 'Cloud Firestore Database' };
   };
 
   useEffect(() => {
@@ -144,42 +199,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Check Google connection status
       const status = getGoogleConnectionStatus();
       setGoogleConnectionStatus(status);
-      setGoogleUserEmail(getStoredGoogleUser().email);
+      const stored = getStoredGoogleUser();
+      setGoogleUserEmail(stored.email);
+      setGoogleUserName(stored.name);
+      setGoogleUserPhoto(stored.photoUrl);
+    });
+
+    // Subscribe to Firebase Auth listener
+    const unsubscribeAuth = initAuth((user) => {
+      setGoogleConnectionStatus('CONNECTED');
+      setGoogleUserEmail(user.email);
+      setGoogleUserName(user.displayName);
+      setGoogleUserPhoto(user.photoURL);
     });
 
     let prevPending = 0;
-    const unsubscribe = syncManager.subscribe((online, pending, syncing, msg) => {
+    const unsubscribeSync = syncManager.subscribe((online, pending, syncing, msg) => {
       setIsOnline(online);
       setPendingSyncCount(pending);
       setIsSyncing(syncing);
 
       if (prevPending > 0 && pending === 0 && online) {
-        showToast('Sinkronisasi otomatis ke Google Sheets berhasil!', 'success');
+        showToast('Sinkronisasi otomatis ke Cloud Firestore berhasil!', 'success');
       }
       prevPending = pending;
     });
 
-    // Listen for auth & connection changes
-    const handleAuthChanged = () => {
+    // Listen for custom auth events
+    const handleAuthChanged = (e: any) => {
       const status = getGoogleConnectionStatus();
       setGoogleConnectionStatus(status);
-      setGoogleUserEmail(getStoredGoogleUser().email);
-    };
-
-    const handleConnLost = (e: any) => {
-      setGoogleConnectionStatus('EXPIRED');
-      showToast('Koneksi Google Sheets terputus. Klik "Hubungkan Ulang" untuk melanjutkan sinkronisasi.', 'info');
+      const stored = getStoredGoogleUser();
+      setGoogleUserEmail(stored.email);
+      setGoogleUserName(stored.name);
+      setGoogleUserPhoto(stored.photoUrl);
     };
 
     window.addEventListener('google-auth-changed', handleAuthChanged);
-    window.addEventListener('google-sheets-connection-lost', handleConnLost);
-    window.addEventListener('google-sheets-reconnected', handleAuthChanged);
 
     return () => {
-      unsubscribe();
+      unsubscribeAuth();
+      unsubscribeSync();
       window.removeEventListener('google-auth-changed', handleAuthChanged);
-      window.removeEventListener('google-sheets-connection-lost', handleConnLost);
-      window.removeEventListener('google-sheets-reconnected', handleAuthChanged);
     };
   }, []);
 
@@ -208,6 +269,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast,
         googleConnectionStatus,
         googleUserEmail,
+        googleUserName,
+        googleUserPhoto,
+        loginGoogle,
+        logoutGoogleUser,
+        testFirestore,
+        restoreFromCloud,
         reconnectGoogle,
         testSheetsConnection,
       }}

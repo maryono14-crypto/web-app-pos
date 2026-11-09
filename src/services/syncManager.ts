@@ -1,6 +1,6 @@
 import { db } from '../db/indexedDB';
 import { SyncQueueItem } from '../types';
-import { syncAllToGoogleSheets } from './sheetsService';
+import { syncAllToFirestore } from './firestoreSyncService';
 
 type SyncListener = (isOnline: boolean, pendingCount: number, isSyncing: boolean, lastSyncMessage?: string) => void;
 
@@ -27,17 +27,13 @@ class SyncManager {
         this.notify();
       });
 
-      // Listen for Google connection restored
-      window.addEventListener('google-sheets-reconnected', () => {
-        this.lastSyncMessage = 'Koneksi Google Sheets berhasil dipulihkan!';
+      // Listen for Cloud/Google auth events
+      window.addEventListener('google-auth-changed', () => {
+        this.lastSyncMessage = 'Status autentikasi Cloud diperbarui.';
         this.notify();
-        this.triggerAutoSync();
-      });
-
-      // Listen for Google connection lost
-      window.addEventListener('google-sheets-connection-lost', (e: any) => {
-        this.lastSyncMessage = e?.detail?.message || 'Sambungan Google Sheets terputus.';
-        this.notify();
+        if (this.isOnline && !this.isSimulatedOffline) {
+          this.triggerAutoSync();
+        }
       });
 
       // Periodic retry every 30 seconds if online and there are pending items
@@ -139,8 +135,8 @@ class SyncManager {
       return {
         success: false,
         message: !this.getIsOnline()
-          ? 'Perangkat sedang offline. Transaksi tersimpan aman di IndexedDB.'
-          : 'Sinkronisasi sedang berlangsung...',
+          ? 'Perangkat sedang offline. Transaksi tersimpan aman di IndexedDB lokal.'
+          : 'Sinkronisasi Cloud sedang berlangsung...',
       };
     }
 
@@ -148,33 +144,24 @@ class SyncManager {
       this.isSyncing = true;
       await this.notify();
 
-      // Check if we have Google Sheets access token or spreadsheet configured
-      const settings = await db.settings.get('current_config');
-      if (!settings?.spreadsheetId) {
-        // Not linked to spreadsheet yet; stay in offline queue
-        this.lastSyncMessage = 'Tersimpan di IndexedDB lokal (Google Sheets belum disambungkan).';
-        return { success: true, message: this.lastSyncMessage };
-      }
-
       // Check pending count
       const pendingCount = await this.getPendingCount();
       if (pendingCount === 0) {
-        this.lastSyncMessage = 'Seluruh data lokal telah tersinkronisasi.';
+        this.lastSyncMessage = 'Seluruh data lokal telah tersinkronisasi ke Cloud Firestore.';
         return { success: true, message: this.lastSyncMessage };
       }
 
-      // Sync all tables to Google Sheets
-      const syncResult = await syncAllToGoogleSheets();
-      await db.syncQueue.where('status').equals('PENDING').modify({ status: 'SYNCED' });
+      // Sync to Cloud Firestore
+      const syncResult = await syncAllToFirestore();
 
-      this.lastSyncMessage = `Berhasil sinkronisasi otomatis! ${syncResult.syncedCounts.penjualan} penjualan & ${syncResult.syncedCounts.produk} produk terkirim ke Google Sheets.`;
+      this.lastSyncMessage = `Berhasil sinkronisasi otomatis! ${syncResult.syncedCounts.sales} penjualan & ${syncResult.syncedCounts.products} produk tersimpan di Cloud Firestore.`;
 
       // Record in audit log
       await db.auditLogs.add({
         id: `AUD-${Date.now()}`,
         timestamp: new Date().toISOString(),
         userId: 'SYNC_DAEMON',
-        userName: 'Sistem Sinkronisasi',
+        userName: 'Sistem Sinkronisasi Cloud',
         action: 'AUTO_SYNC_SUCCESS',
         category: 'SYNC',
         details: this.lastSyncMessage,
@@ -186,7 +173,7 @@ class SyncManager {
       };
     } catch (err: any) {
       console.warn('Auto sync warning:', err);
-      this.lastSyncMessage = err?.message || 'Gagal sinkronisasi ke Google Sheets';
+      this.lastSyncMessage = err?.message || 'Gagal sinkronisasi ke Cloud Firestore';
       return { success: false, message: this.lastSyncMessage };
     } finally {
       this.isSyncing = false;

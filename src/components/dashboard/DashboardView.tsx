@@ -137,7 +137,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" />
             <span>
               Terdapat <strong>{pendingSyncCount} transaksi / data</strong> di antrean lokal
-              IndexedDB yang belum disinkronkan ke Google Sheets.
+              IndexedDB yang belum disinkronkan ke Cloud Firestore.
             </span>
           </div>
           <button
